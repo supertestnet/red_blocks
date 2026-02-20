@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, user-scalable=no">
+        <title>Red Blocks</title>
+        <script>
+            var red_blocks = {
+                electrum_servers: [
+                    // `wss://horsey.cryptocowboys.net:50004`,
+                    `wss://btc.electroncash.dk:60004`,
+                    `wss://bitcoin.grey.pw:50004`,
+                    `wss://blackie.c3-soft.com:57004`,
+                    `wss://electrum.jochen-hoenicke.de:50010`,
+                    `wss://blockstream.info/electrum-websocket/`,
+                    `wss://mempool.guide/electrum-websocket/`,
+                ],
+                electrum_server: null,
+                blockheight: 0,
+                blockheights: {},
+                socket: null,
+                reverseHexString: s => s.match(/[a-fA-F0-9]{2}/g).reverse().join(''),
+                getRand: num_of_bytes => red_blocks.bytesToHex( crypto.getRandomValues( new Uint8Array( num_of_bytes ) ) ),
+                waitSomeTime: num => new Promise( resolve => setTimeout( resolve, num ) ),
+                bytesToHex: bytes => bytes.reduce( ( str, byte ) => str + byte.toString( 16 ).padStart( 2, "0" ), "" ),
+                hexToBinary: hex => {
+                    var array_hex = hex.match( /\w{2}/g );
+                    var array_bin = [];
+                    array_hex.forEach( item => array_bin.push( ( parseInt( item, 16 ).toString( 2 ) ).padStart( 8, '0' ) ) );
+                    return array_bin.join( "" );
+                },
+                blobToHex: async blob => {
+                    var buf = await blob.arrayBuffer();
+                    var arr = new Uint8Array( buf );
+                    return red_blocks.bytesToHex( arr );
+                },
+                getHeaders: async blocknum => {
+                    var headers = await fetch( `https://block-dn.org/headers/${blocknum}` );
+                    var blob = await headers.blob();
+                    var hex = await red_blocks.blobToHex( blob );
+                    var arr = hex.match( new RegExp(`.{1,${160}}`, 'g') );
+                    return arr;
+                },
+                parseHeader: header => {
+                    var block_info = {}
+                    var reverseHexString = red_blocks.reverseHexString;
+                    block_info.version = reverseHexString( header.substring( 0, 8 ) );
+                    header = header.substring( 8 );
+                    block_info.prevblock = reverseHexString( header.substring( 0, 64 ) );
+                    header = header.substring( 64 );
+                    block_info.merkle_root = reverseHexString( header.substring( 0, 64 ) );
+                    header = header.substring( 64 );
+                    block_info.timestamp_hex = reverseHexString( header.substring( 0, 8 ) );
+                    block_info.timestamp = parseInt( block_info.timestamp_hex, 16 );
+                    header = header.substring( 8 );
+                    block_info.difficulty = reverseHexString( header.substring( 0, 8 ) );
+                    header = header.substring( 8 );
+                    block_info.nonce = reverseHexString( header );
+                    return block_info;
+                },
+                connectToElectrumServer: async server => {
+                    console.log( `connecting to ${server}...` );
+                    var num_of_attempts = 0;
+                    var loop = async server => {
+                        var socket = null;
+                        try {
+                            socket = new WebSocket( server );
+                        } catch ( e ) {num_of_attempts = num_of_attempts + 1}
+                        if ( socket ) return socket;
+                        console.log( `failed to connect to ${server} ${num_of_attempts} times, retrying...` );
+                        await red_blocks.waitSomeTime( 2_000 );
+                        return loop( server );
+                    }
+                    var socket = await loop( server );
+                    var isReady = async () => {
+                        if ( socket.readyState === 1 ) return;
+                        await red_blocks.waitSomeTime( 10 );
+                        return isReady();
+                    }
+                    await isReady();
+                    console.log( `connected` );
+                    return socket;
+                },
+                queryElectrumServer: async ( socket, json, msg_id ) => {
+                    if ( !json ) return 'you forgot to include a command';
+                    return new Promise( async resolve => {
+                        var handleFunction = async message => {
+                            if ( message.data.includes( msg_id ) ) {
+                                resolve( message.data );
+                                socket.removeEventListener( 'message', handleFunction );
+                            }
+                        }
+                        socket.addEventListener( 'message', handleFunction );
+                        socket.send( JSON.stringify( json ) );
+                    });
+                },
+                getBlockchainInfo: async () => {
+                    //wait til socket is ready
+                    var loop = async () => {
+                        if ( red_blocks.socket && red_blocks.socket.readyState === 1 ) return;
+                        await red_blocks.waitSomeTime( 10 );
+                        return loop();
+                    }
+                    await loop();
+                    //get the header
+                    var msg_id = red_blocks.getRand( 8 );
+                    var formatted_command = {
+                        "id": msg_id,
+                        "method": "blockchain.headers.subscribe",
+                        "params": [],
+                    }
+                    var response_from_server = await red_blocks.queryElectrumServer( red_blocks.socket, formatted_command, msg_id );
+                    response_from_server = JSON.parse( response_from_server );
+                    return response_from_server;
+                },
+                getHeader: async blocknum => {
+                    //wait til socket is ready
+                    var loop = async () => {
+                        if ( red_blocks.socket && red_blocks.socket.readyState === 1 ) return;
+                        await red_blocks.waitSomeTime( 10 );
+                        return loop();
+                    }
+                    await loop();
+                    //get the header
+                    var msg_id = red_blocks.getRand( 8 );
+                    var formatted_command = {
+                        "id": msg_id,
+                        "method": "blockchain.block.header",
+                        "params": [ blocknum ],
+                    }
+                    var response_from_server = await red_blocks.queryElectrumServer( red_blocks.socket, formatted_command, msg_id );
+                    response_from_server = JSON.parse( response_from_server );
+                    return response_from_server;
+                },
+            }
+        </script>
+        <style>
+            * {
+                box-sizing: border-box;
+                font-size: 1.15rem;
+                font-family: Arial, sans-serif;
+            }
+            html {
+                max-width: 800px;
+                padding: 3rem 1rem;
+                margin: auto;
+                line-height: 1.25;
+                padding: 0;
+            }
+            body {
+                margin: 3rem 1rem;
+                word-wrap: break-word;
+            }
+            h1 {
+                font-size: 2rem;
+            }
+            h2 {
+                font-size: 1.5rem;
+            }
+            input {
+                line-height: 1.25;
+                width: 100%;
+                height: 1.8rem;
+                font-size: 1.15rem;
+                border: 1px solid grey;
+            }
+            .hidden {
+                display: none !important;
+            }
+            .square {
+                width: 75px;
+                text-align: center;
+                float: left;
+                margin: .5rem;
+                border: 1px dotted blue;
+                padding: .5rem;
+                cursor: pointer;
+            }
+            .square:hover {
+                border: 1px solid blue;
+                background-color: lightblue;
+            }
+            @media screen and (max-width: 600px) {
+            }
+        </style>
+        <style>
+            .black-bg {
+                width: 100%;
+                position: fixed;
+                top: 0;
+                left: 0;
+                background-color: black;
+                opacity: .5;
+                width: 100vw;
+                height: 100vh;
+            }
+            .modal {
+                position: fixed;
+                box-sizing: border-box;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%,-50%);
+                width: 90%;
+                max-width: 560px;
+                background-color: white;
+                border-radius: 1rem;
+                padding: 20px;
+                color: black;
+                text-align: center;
+                word-wrap: break-word;
+            }
+            .modal * {
+                color: black;
+            }
+            .modal input, .modal textarea {
+                max-width: 90%;
+            }
+            .hidden {
+                display: none !important;
+            }
+        </style>
+        <script>
+            var modalVanish = () => {
+                $( ".black-bg" ).classList.add( "hidden" );
+                $( ".modal" ).classList.add( "hidden" );
+            }
+            var showModal = content => {
+                $( ".modal" ).innerHTML = `<div class="x_modal" style="position: absolute;right: 1rem;top: 0.5rem;font-size: 2rem; cursor: pointer; color: black;" onclick="modalVanish()">&times;</div>`;
+                $( ".modal" ).innerHTML += `<div style="overflow-y: auto; max-height: 80vh; margin-top: 1.5rem;">${content}</div>`;
+                $( ".black-bg" ).classList.remove( "hidden" );
+                $( ".modal" ).classList.remove( "hidden" );
+            }
+        </script>
+        <script>
+            var $ = document.querySelector.bind( document );
+            var $$ = document.querySelectorAll.bind( document );
+            var url_params = new URLSearchParams( window.location.search );
+            var url_keys = url_params.keys();
+            var $_GET = {}
+            for ( var key of url_keys ) $_GET[ key ] = url_params.get( key );
+            var hash_arr = window.location.href.substring( window.location.href.indexOf( "#" ) ).split( "#" );
+            hash_arr.splice( 0, 1 );
+            var $_HASH = {}
+            hash_arr.forEach( item => {
+                var vals = item.split( "=" );
+                $_HASH[ vals[ 0 ] ] = vals[ 1 ];
+            });
+        </script>
+    </head>
+    <body>
+        <h1>Red Blocks</h1>
+        <div class="webpage load_page"><p>loading...</p></div>
+        <div class="webpage home_page hidden">
+            <p>Track the activation status of BIP110</p>
+            <p class="hidden">Start height of this signaling window: <span class="start_height"></span></p>
+            <p class="hidden">Current blockheight: <span class="current_height"></span></p>
+            <p>Number of red blocks so far: <span class="count_of_red">0</span></p>
+            <p>Number of green blocks so far: <span class="count_of_green">0</span></p>
+            <p>Number of green blocks needed for activation: 1109</p>
+            <div class="blocks"></div>
+        </div>
+        <script>
+            var showPage = page => {
+                $$( '.webpage' ).forEach( item => item.classList.add( "hidden" ) );
+                $( `.${page}` ).classList.remove( "hidden" );
+            }
+            (async()=>{
+                red_blocks.electrum_server = red_blocks.electrum_servers[ Math.floor( Math.random() * red_blocks.electrum_servers.length ) ];
+                var bhLoop = async () => {
+                    if ( !red_blocks.socket || red_blocks.socket.readyState !== 1 ) red_blocks.socket = await red_blocks.connectToElectrumServer( red_blocks.electrum_server );
+                    var bc_info = await red_blocks.getBlockchainInfo();
+                    red_blocks.blockheight = bc_info.result.height;
+                    await red_blocks.waitSomeTime( 2_000 );
+                    bhLoop();
+                }
+                bhLoop();
+                var drawLoop = async prev_blockheight => {
+                    var current_blockheight = red_blocks.blockheight;
+                    if ( current_blockheight === prev_blockheight || !current_blockheight ) {
+                        await red_blocks.waitSomeTime( 2_000 );
+                        drawLoop( current_blockheight );
+                        return;
+                    }
+                    var start_height = current_blockheight - ( current_blockheight % 2016 );
+                    var headers = await red_blocks.getHeaders( 900000 );
+                    headers.splice( 0, start_height - 900000 );
+                    headers.forEach( ( item, index ) => red_blocks.blockheights[ start_height + index ] = item );
+                    $( '.current_height' ).innerText = current_blockheight;
+                    $( '.start_height' ).innerText = start_height;
+                    var num_of_blocks = 2016;
+                    var html = ``;
+                    var count_so_far = 0;
+                    var i; for ( i=0; i<num_of_blocks; i++ ) {
+                        var blockheight = start_height + i;
+                        if ( !red_blocks.blockheights.hasOwnProperty( blockheight ) ) red_blocks.blockheights[ blockheight ] = null;
+                        var is_green = false;
+                        var is_red = false;
+                        if ( red_blocks.blockheights[ blockheight ] ) {
+                            var raw_header = red_blocks.blockheights[ blockheight ];
+                            var parsed_header = red_blocks.parseHeader( raw_header );
+                            var version_hex = parsed_header.version;
+                            var version_bin = red_blocks.hexToBinary( version_hex );
+                            var is_green = !!Number( version_bin.split( "" ).reverse()[ 4 ] );
+                            var is_red = !Number( version_bin.split( "" ).reverse()[ 4 ] );
+                        }
+                        var square = '⬜';
+                        if ( is_green !== is_red ) {
+                            if ( is_green ) square = '🟩';
+                            else square = '🟥';
+                        }
+                        if ( is_green ) count_so_far = count_so_far + 1;
+                        var html = html + `
+                            <div class="square" data-blocknum="${i}" data-blockheight="${blockheight}">
+                                <div class="emoji">
+                                    ${square}
+                                </div>
+                                <div class="blocknum">
+                                    ${i}
+                                </div>
+                            </div>
+                        `;
+                    }
+                    var div = document.createElement( "div" );
+                    div.innerHTML = html;
+                    $( '.blocks' ).innerHTML = ``;
+                    $( '.blocks' ).append( div );
+                    $$( '.square' ).forEach( item => item.onclick = e => {
+                        var target = e.target;
+                        if ( !target.classList.contains( "square" ) ) target = target.parentElement;
+                        var blockheight = target.getAttribute( "data-blockheight" );
+                        var blocknum = target.getAttribute( "data-blocknum" );
+                        var raw_header = red_blocks.blockheights[ blockheight ];
+                        var html = `
+                            <p>Blockheight: ${blockheight}</p>
+                            <p>In this epoch: ${blocknum}</p>
+                        `;
+                        if ( raw_header ) {
+                            var parsed_header = red_blocks.parseHeader( raw_header );
+                            var version_hex = parsed_header.version;
+                            var version_bin = red_blocks.hexToBinary( version_hex );
+                            var version_arr = version_bin.split( "" ).reverse();
+                            var version_str = "";
+                            version_arr.forEach( ( item, index ) => {
+                                var color = index === 4 ? "yellow" : "white";
+                                version_str = version_str + `<span style="background-color: ${color};">${item}</span>`;
+                            });
+                            html = html + `
+                                <p>Version bits in this block:</p>
+                                <p>${version_str}</p>
+                                <p>The BIP110 signaling bit is highlighted in yellow</p>
+                            `;
+                        } else {
+                            html = html + `<p>Not mined yet</p>`;
+                        }
+                        showModal( html );
+                    });
+                    $( '.count_of_green' ).innerText = count_so_far;
+                    $( '.count_of_red' ).innerText = Object.keys( red_blocks.blockheights ).filter( item => red_blocks.blockheights[ item ] !== null ).length - 1 - count_so_far;
+                    showPage( 'home_page' );
+                    await red_blocks.waitSomeTime( 2_000 );
+                    drawLoop( current_blockheight );
+                }
+                drawLoop();
+                var getHeaders = async () => {
+                    var blockheights = Object.keys( red_blocks.blockheights );
+                    blockheights.sort();
+                    var i; for ( i=0; i<blockheights.length; i++ ) {
+                        var blockheight = Number( blockheights[ i ] );
+                        if ( red_blocks.blockheights[ blockheight ] ) continue;
+                        if ( blockheight > red_blocks.blockheight ) continue;
+                        var header = await red_blocks.getHeader( blockheight );
+                        red_blocks.blockheights[ blockheight ] = header.result;
+                        var is_green = false;
+                        var is_red = false;
+                        var raw_header = red_blocks.blockheights[ blockheight ];
+                        var parsed_header = red_blocks.parseHeader( raw_header );
+                        var version_hex = parsed_header.version;
+                        var version_bin = red_blocks.hexToBinary( version_hex );
+                        var is_green = !!Number( version_bin.split( "" ).reverse()[ 4 ] );
+                        var is_red = !Number( version_bin.split( "" ).reverse()[ 4 ] );
+                        var square = '⬜';
+                        if ( is_green !== is_red ) {
+                            if ( is_green ) square = '🟩';
+                            else square = '🟥';
+                        }
+                        if ( is_green ) $( '.count_of_green' ).innerText = Number( $( '.count_of_green' ).innerText ) + 1;
+                        if ( is_red ) $( '.count_of_red' ).innerText = Number( $( '.count_of_red' ).innerText ) + 1;
+                        $( `[data-blockheight="${blockheight}"]` ).getElementsByClassName( "emoji" )[ 0 ].innerText = square;
+                    }
+                    await red_blocks.waitSomeTime( 2_000 );
+                    getHeaders();
+                }
+                getHeaders();
+            })();
+        </script>
+        <div class="black-bg hidden" onclick="modalVanish();"></div>
+        <div class="modal hidden"></div>
+    </body>
+</html>
