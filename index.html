@@ -292,8 +292,9 @@
                     var num_of_blocks = 2016;
                     var html = ``;
                     var count_of_green = 0;
-                    var i; for ( i=0; i<num_of_blocks; i++ ) {
-                        var blockheight = start_height + i;
+                    var count_of_red = 0;
+                    var i; for ( i=1; i<num_of_blocks + 1; i++ ) {
+                        var blockheight = start_height + i - 1;
                         if ( !red_blocks.blockheights.hasOwnProperty( blockheight ) ) red_blocks.blockheights[ blockheight ] = null;
                         var is_green = false;
                         var is_red = false;
@@ -311,6 +312,7 @@
                             else square = '🟥';
                         }
                         if ( is_green ) count_of_green = count_of_green + 1;
+                        if ( is_red ) count_of_red = count_of_red + 1;
                         var html = html + `
                             <div class="square" data-blocknum="${i}" data-blockheight="${blockheight}">
                                 <div class="emoji">
@@ -356,7 +358,6 @@
                         }
                         showModal( html );
                     });
-                    var count_of_red = Object.keys( red_blocks.blockheights ).filter( item => red_blocks.blockheights[ item ] !== null ).length - 1 - count_of_green;
                     $( '.count_of_green' ).innerText = count_of_green;
                     $( '.count_of_red' ).innerText = count_of_red;
                     $( '.blocks_left' ).innerText = 2016 - ( count_of_green + count_of_red );
