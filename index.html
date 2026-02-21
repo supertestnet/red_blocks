@@ -13,7 +13,7 @@
                     `wss://blackie.c3-soft.com:57004`,
                     `wss://electrum.jochen-hoenicke.de:50010`,
                     `wss://blockstream.info/electrum-websocket/`,
-                    // `wss://mempool.guide/electrum-websocket/`,
+                    `wss://mempool.guide/electrum-websocket/`,
                 ],
                 electrum_server: null,
                 blockheight: 0,
@@ -35,16 +35,22 @@
                     return red_blocks.bytesToHex( arr );
                 },
                 getHeaders: async ( blocknum, count ) => {
-                    var msg_id = red_blocks.getRand( 8 );
-                    var formatted_command = {
-                        "id": msg_id,
-                        "method": "blockchain.block.headers",
-                        "params": [ blocknum, count ],
+                    try {
+                        var msg_id = red_blocks.getRand( 8 );
+                        var formatted_command = {
+                            "id": msg_id,
+                            "method": "blockchain.block.headers",
+                            "params": [ blocknum, count ],
+                        }
+                        var response_from_server = await red_blocks.queryElectrumServer( red_blocks.socket, formatted_command, msg_id );
+                        response_from_server = JSON.parse( response_from_server );
+                        var arr = response_from_server.result.hex.match( new RegExp( `.{1,${160}}`, 'g' ) );
+                        return arr;
+                    } catch ( e ) {
+                        console.log( 'retrying headers request...' );
+                        await red_blocks.waitSomeTime( 1_000 );
+                        return await red_blocks.getHeaders( blocknum, count );
                     }
-                    var response_from_server = await red_blocks.queryElectrumServer( red_blocks.socket, formatted_command, msg_id );
-                    response_from_server = JSON.parse( response_from_server );
-                    var arr = response_from_server.result.hex.match( new RegExp( `.{1,${160}}`, 'g' ) );
-                    return arr;
                 },
                 parseHeader: header => {
                     var block_info = {}
