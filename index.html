@@ -34,11 +34,16 @@
                     var arr = new Uint8Array( buf );
                     return red_blocks.bytesToHex( arr );
                 },
-                getHeaders: async blocknum => {
-                    var headers = await fetch( `https://block-dn.org/headers/${blocknum}` );
-                    var blob = await headers.blob();
-                    var hex = await red_blocks.blobToHex( blob );
-                    var arr = hex.match( new RegExp(`.{1,${160}}`, 'g') );
+                getHeaders: async ( blocknum, count ) => {
+                    var msg_id = red_blocks.getRand( 8 );
+                    var formatted_command = {
+                        "id": msg_id,
+                        "method": "blockchain.block.headers",
+                        "params": [ blocknum, count ],
+                    }
+                    var response_from_server = await red_blocks.queryElectrumServer( red_blocks.socket, formatted_command, msg_id );
+                    response_from_server = JSON.parse( response_from_server );
+                    var arr = response_from_server.result.hex.match( new RegExp( `.{1,${160}}`, 'g' ) );
                     return arr;
                 },
                 parseHeader: header => {
@@ -284,8 +289,7 @@
                         return;
                     }
                     var start_height = current_blockheight - ( current_blockheight % 2016 );
-                    var headers = await red_blocks.getHeaders( 900000 );
-                    headers.splice( 0, start_height - 900000 );
+                    var headers = await red_blocks.getHeaders( start_height, current_blockheight - start_height );
                     headers.forEach( ( item, index ) => red_blocks.blockheights[ start_height + index ] = item );
                     $( '.current_height' ).innerText = current_blockheight;
                     $( '.start_height' ).innerText = start_height;
